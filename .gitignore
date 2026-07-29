@@ -1,0 +1,8 @@
+node_modules/
+output/
+api_keys.txt
+accounts.json
+used_prompts.json
+gemini_model_config.json
+*.log
+.DS_Store

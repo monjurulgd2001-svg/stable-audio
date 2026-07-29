@@ -1,0 +1,16 @@
+{
+	"name": "stable-audio-generator",
+	"version": "1.0.0",
+	"description": "Automated copyright-free audio generator using Gemini AI prompts and Stable Audio API",
+	"main": "generator.js",
+	"scripts": {
+		"start": "node generator.js",
+		"generate": "node generator.js",
+		"register": "node -e \"require('./account-manager').registerNewAccount().then(a => console.log('Account:', a.email, 'Key:', a.apiKey))\"",
+		"keys": "node -e \"const a = require('./account-manager').loadAccounts(); a.forEach(x => console.log(x.email, x.apiKeys?.map(k => k.key.substring(0,15)+'...').join(', ')))\""
+	},
+	"dependencies": {
+		"node-fetch": "^2.7.0",
+		"puppeteer": "^23.0.0"
+	}
+}
