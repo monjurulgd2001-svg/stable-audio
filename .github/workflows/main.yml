@@ -1,0 +1,137 @@
+name: Daily Audio Generator
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      quota:
+        description: "Daily track quota (default 50)"
+        required: false
+        default: "50"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  generate-audio:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Debug - Show files
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "Files in root:"
+          ls -la
+          echo ""
+          echo "Checking package.json:"
+          cat package.json || echo "package.json NOT FOUND"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Chrome dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2t64 libatk-bridge2.0-0 libgtk-3-0 libnss3 || true
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable || true
+          echo "Chrome version:"
+          google-chrome-stable --version || echo "Chrome not found"
+
+      - name: Install Node.js dependencies
+        run: |
+          echo "Working directory: $(pwd)"
+          ls -la package.json
+          npm install
+
+      - name: Install Puppeteer Chrome Binary
+        run: npx puppeteer browsers install chrome
+
+      - name: Run Daily Audio Generator
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          STABLE_AUDIO_KEY: ${{ secrets.STABLE_AUDIO_KEY }}
+          CHROME_PATH: /usr/bin/google-chrome-stable
+        run: |
+          echo "Starting daily audio generation..."
+          echo "Date: $(date)"
+          echo "Chrome path: $(which google-chrome-stable || echo 'not found')"
+          echo "Files available:"
+          ls -la *.js
+          node generator.js
+
+      - name: Create ZIP archive of generated audio
+        if: always()
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          if [ -d "output" ] && [ "$(ls -A output/*.mp3 2>/dev/null)" ]; then
+            zip -r "audio-tracks-${DATE}.zip" output/*.mp3
+            echo "ZIP created: audio-tracks-${DATE}.zip"
+            echo "Track count: $(ls output/*.mp3 | wc -l)"
+          else
+            echo "No MP3 files to archive"
+          fi
+
+      - name: Upload to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audio-tracks-${{ github.run_id }}
+          path: output/*.mp3
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Upload ZIP to Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audio-tracks-zip-${{ github.run_id }}
+          path: audio-tracks-*.zip
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Commit progress and used prompts
+        if: always()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add output/progress_*.json accounts.json used_prompts.json gemini_model_config.json || true
+          git commit -m "Auto-update generation progress and prompt history [skip ci]" || echo "No changes to commit"
+          git push || echo "Push failed"
+
+      - name: Display Summary
+        if: always()
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          echo "### Audio Generation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** ${DATE}" >> $GITHUB_STEP_SUMMARY
+          echo "**Prompt Engine:** Gemini AI" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f "output/progress_${DATE}.json" ]; then
+            TRACKS=$(cat "output/progress_${DATE}.json" | grep -o '"completed": [0-9]*' | head -1 | cut -d' ' -f2)
+            FAILED=$(cat "output/progress_${DATE}.json" | grep -o '"failed": [0-9]*' | head -1 | cut -d' ' -f2)
+            echo "**Generated:** ${TRACKS} tracks" >> $GITHUB_STEP_SUMMARY
+            echo "**Failed:** ${FAILED} tracks" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -f "used_prompts.json" ]; then
+            PROMPT_COUNT=$(cat used_prompts.json | grep -c '"prompt"')
+            echo "**Total unique prompts used:** ${PROMPT_COUNT}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          MP3_COUNT=$(ls output/*.mp3 2>/dev/null | wc -l)
+          echo "**Total MP3 files:** ${MP3_COUNT}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Download from **Actions** tab > this run > Artifacts" >> $GITHUB_STEP_SUMMARY
